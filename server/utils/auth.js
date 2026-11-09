@@ -9,6 +9,9 @@ const SALT_LENGTH = 16;
 const KEY_LENGTH = 64;
 const TOKEN_LENGTH = 48;
 const TOKEN_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
+const API_KEY_PREFIX = 'qzk_';
+const API_KEY_BYTES = 32;
+const LAST_USED_STALE_MS = 60 * 60 * 1000; // 1h
 
 const sessions = new Map();
 
@@ -164,6 +167,107 @@ const changePassword = (userId, newPassword) => {
     return {success: true};
 };
 
+const generateApiKeyPlaintext = () => {
+    return API_KEY_PREFIX + crypto.randomBytes(API_KEY_BYTES).toString('base64url');
+};
+
+const hashApiKey = (plaintext) => {
+    return crypto.createHash('sha256').update(plaintext).digest('hex');
+};
+
+const normalizeExpiry = (expiresAt) => {
+    if (expiresAt === undefined || expiresAt === null || expiresAt === '') return undefined;
+    const parsed = new Date(expiresAt);
+    if (isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
+};
+
+const createApiKey = (userId, name, expiresAt) => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    if (!user) return {error: 'Benutzer nicht gefunden.', status: 404};
+
+    const normalized = normalizeExpiry(expiresAt);
+    if (normalized === null) return {error: 'Ungültiges Ablaufdatum.', status: 400};
+
+    const key = generateApiKeyPlaintext();
+    const record = {
+        id: crypto.randomUUID(),
+        name,
+        keyHash: hashApiKey(key),
+        suffix: key.slice(-4),
+        createdAt: new Date().toISOString()
+    };
+    if (normalized) record.expiresAt = normalized;
+
+    user.apiKeys = user.apiKeys || [];
+    user.apiKeys.push(record);
+    writeUsers(data);
+
+    return {key, meta: {id: record.id, name: record.name, createdAt: record.createdAt, expiresAt: record.expiresAt || null}};
+};
+
+const validateApiKey = (plaintext) => {
+    if (!plaintext || typeof plaintext !== 'string') return null;
+
+    const data = readUsers();
+    const needle = hashApiKey(plaintext);
+
+    for (const user of data.users) {
+        const keys = user.apiKeys || [];
+        for (const entry of keys) {
+            if (!entry.keyHash) continue;
+
+            let match = false;
+            try {
+                match = crypto.timingSafeEqual(Buffer.from(needle, 'hex'), Buffer.from(entry.keyHash, 'hex'));
+            } catch {
+                continue;
+            }
+            if (!match) continue;
+            if (entry.expiresAt && new Date(entry.expiresAt).getTime() <= Date.now()) continue;
+
+            if (!entry.lastUsedAt || Date.now() - new Date(entry.lastUsedAt).getTime() > LAST_USED_STALE_MS) {
+                entry.lastUsedAt = new Date().toISOString();
+                writeUsers(data);
+            }
+
+            return {id: user.id, username: user.username, role: user.role};
+        }
+    }
+
+    return null;
+};
+
+const listApiKeys = (userId) => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    if (!user) return {error: 'Benutzer nicht gefunden.', status: 404};
+
+    return {keys: (user.apiKeys || []).map(k => ({
+        id: k.id,
+        name: k.name,
+        createdAt: k.createdAt,
+        expiresAt: k.expiresAt || null,
+        lastUsedAt: k.lastUsedAt || null,
+        suffix: k.suffix
+    }))};
+};
+
+const revokeApiKey = (userId, keyId) => {
+    const data = readUsers();
+    const user = data.users.find(u => u.id === userId);
+    if (!user) return {error: 'Benutzer nicht gefunden.', status: 404};
+
+    const idx = (user.apiKeys || []).findIndex(k => k.id === keyId);
+    if (idx === -1) return {error: 'API-Schlüssel nicht gefunden.', status: 404};
+
+    user.apiKeys.splice(idx, 1);
+    writeUsers(data);
+
+    return {success: true};
+};
+
 module.exports = {
     isSetupComplete,
     createUser,
@@ -173,5 +277,9 @@ module.exports = {
     getUsers,
     deleteUser,
     updateUserRole,
-    changePassword
+    changePassword,
+    createApiKey,
+    validateApiKey,
+    listApiKeys,
+    revokeApiKey
 };

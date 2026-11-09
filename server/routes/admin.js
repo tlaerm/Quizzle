@@ -1,6 +1,6 @@
 const app = require('express').Router();
 const {requireAdmin} = require('../middleware/auth');
-const {getUsers, createUser, deleteUser, updateUserRole, changePassword} = require('../utils/auth');
+const {getUsers, createUser, deleteUser, updateUserRole, changePassword, createApiKey, listApiKeys, revokeApiKey} = require('../utils/auth');
 const fs = require('fs');
 const path = require('path');
 const {brandingFolder} = require('../utils/file');
@@ -208,6 +208,56 @@ app.put('/users/:userId/password', requireAdmin, (req, res) => {
     const result = changePassword(userId, password);
     if (result.error) {
         return res.status(400).json({message: result.error});
+    }
+
+    res.json(result);
+});
+
+app.post('/users/:userId/api-keys', requireAdmin, (req, res) => {
+    const {userId} = req.params;
+    const {name, expiresAt} = req.body;
+
+    if (userId !== req.user.id) {
+        return res.status(403).json({message: 'Du kannst nur deine eigenen API-Schlüssel verwalten.'});
+    }
+
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+        return res.status(400).json({message: 'Name ist erforderlich.'});
+    }
+
+    const result = createApiKey(userId, name.trim(), expiresAt);
+    if (result.error) {
+        return res.status(result.status || 400).json({message: result.error});
+    }
+
+    res.json(result);
+});
+
+app.get('/users/:userId/api-keys', requireAdmin, (req, res) => {
+    const {userId} = req.params;
+
+    if (userId !== req.user.id) {
+        return res.status(403).json({message: 'Du kannst nur deine eigenen API-Schlüssel verwalten.'});
+    }
+
+    const result = listApiKeys(userId);
+    if (result.error) {
+        return res.status(result.status || 400).json({message: result.error});
+    }
+
+    res.json(result);
+});
+
+app.delete('/users/:userId/api-keys/:keyId', requireAdmin, (req, res) => {
+    const {userId, keyId} = req.params;
+
+    if (userId !== req.user.id) {
+        return res.status(403).json({message: 'Du kannst nur deine eigenen API-Schlüssel verwalten.'});
+    }
+
+    const result = revokeApiKey(userId, keyId);
+    if (result.error) {
+        return res.status(result.status || 400).json({message: result.error});
     }
 
     res.json(result);

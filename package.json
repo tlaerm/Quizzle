@@ -16,6 +16,7 @@
   },
   "scripts": {
     "start": "bun server/index.js",
+    "test": "bun test",
     "dev:server": "bun --watch --ignore=data/** server/index.js",
     "dev:client": "cd webui && bun run dev",
     "dev": "concurrently \"bun run dev:server\" \"bun run dev:client\""

@@ -1,7 +1,7 @@
 const rateLimit = require('express-rate-limit');
 const app = require('express').Router();
-const {isSetupComplete, createUser, login, validateToken, logout} = require('../utils/auth');
-const {extractToken} = require('../middleware/auth');
+const {isSetupComplete, createUser, login, validateToken, logout, validateApiKey} = require('../utils/auth');
+const {extractToken, extractBearer} = require('../middleware/auth');
 
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -86,16 +86,20 @@ app.post('/login', loginLimiter, (req, res) => {
 
 app.get('/me', (req, res) => {
     const token = extractToken(req);
-    if (!token) {
-        return res.json({authenticated: false});
+    if (token) {
+        const user = validateToken(token);
+        if (!user) {
+            return res.json({authenticated: false});
+        }
+
+        return res.json({authenticated: true, user});
     }
 
-    const user = validateToken(token);
-    if (!user) {
-        return res.json({authenticated: false});
-    }
-
-    res.json({authenticated: true, user});
+    // No session cookie: fall back to a Bearer API-key, mirroring requireAuth
+    // (the key is consulted only when no quizzle_token cookie is present).
+    const apiKey = extractBearer(req);
+    const user = apiKey ? validateApiKey(apiKey) : null;
+    res.json(user ? {authenticated: true, user} : {authenticated: false});
 });
 
 app.post('/logout', (req, res) => {

@@ -10,7 +10,7 @@ import Dialog from "@/common/components/Dialog";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
     faUsers, faRobot, faPalette, faPlus, faTrash,
-    faShieldAlt, faChalkboardTeacher, faKey, faRightFromBracket, faUpload, faRotateLeft, faImage
+    faShieldAlt, faChalkboardTeacher, faKey, faCopy, faRightFromBracket, faUpload, faRotateLeft, faImage
 } from "@fortawesome/free-solid-svg-icons";
 import {motion} from "framer-motion";
 import toast from "react-hot-toast";
@@ -61,6 +61,13 @@ export const Admin = () => {
     const [showPasswordDialog, setShowPasswordDialog] = useState(false);
     const [passwordResetUserId, setPasswordResetUserId] = useState(null);
     const [newPasswordValue, setNewPasswordValue] = useState('');
+
+    const [apiKeys, setApiKeys] = useState([]);
+    const [showNewApiKeyDialog, setShowNewApiKeyDialog] = useState(false);
+    const [newKeyName, setNewKeyName] = useState('');
+    const [newKeyExpiry, setNewKeyExpiry] = useState('');
+    const [newApiKeyError, setNewApiKeyError] = useState('');
+    const [newKeyResult, setNewKeyResult] = useState(null);
 
     useEffect(() => {
         if (!isAdmin) {
@@ -118,6 +125,61 @@ export const Admin = () => {
             setUsers(data.users || []);
         } catch (error) {
             toast.error('Benutzer konnten nicht geladen werden.');
+        }
+    };
+
+    const loadApiKeys = async () => {
+        if (!user?.id) return;
+        try {
+            const data = await jsonRequest(`/admin/users/${user.id}/api-keys`);
+            setApiKeys(data.keys || []);
+        } catch {
+            setApiKeys([]);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'apiKeys' && user?.id) loadApiKeys();
+    }, [activeTab]);
+
+    const createApiKey = async () => {
+        if (!newKeyName.trim()) {
+            setNewApiKeyError('Name ist erforderlich.');
+            return;
+        }
+
+        try {
+            const result = await postRequest(`/admin/users/${user.id}/api-keys`, {
+                name: newKeyName.trim(),
+                expiresAt: newKeyExpiry ? new Date(newKeyExpiry).toISOString() : undefined
+            });
+            setNewKeyResult(result);
+            setShowNewApiKeyDialog(false);
+            setNewKeyName('');
+            setNewKeyExpiry('');
+            setNewApiKeyError('');
+            loadApiKeys();
+        } catch (error) {
+            setNewApiKeyError(error.message || 'Fehler beim Erstellen.');
+        }
+    };
+
+    const revokeApiKey = async (keyId) => {
+        try {
+            await deleteRequest(`/admin/users/${user.id}/api-keys/${keyId}`);
+            toast.success('API-Schlüssel widerrufen.');
+            loadApiKeys();
+        } catch (error) {
+            toast.error(error.message || 'Fehler beim Widerrufen.');
+        }
+    };
+
+    const copyKey = async (key) => {
+        try {
+            await navigator.clipboard.writeText(key);
+            toast.success('API-Schlüssel kopiert.');
+        } catch {
+            toast.error('Kopieren fehlgeschlagen. Bitte manuell markieren.');
         }
     };
 
@@ -293,6 +355,9 @@ export const Admin = () => {
                     <button className={`sidebar-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => setActiveTab('users')}>
                         <FontAwesomeIcon icon={faUsers}/> Benutzerverwaltung
                     </button>
+                    <button className={`sidebar-item ${activeTab === 'apiKeys' ? 'active' : ''}`} onClick={() => setActiveTab('apiKeys')}>
+                        <FontAwesomeIcon icon={faKey}/> API-Schlüssel
+                    </button>
                 </div>
 
                 <div className="admin-panel">
@@ -461,6 +526,38 @@ export const Admin = () => {
                             </div>
                         </motion.div>
                     )}
+
+                    {activeTab === 'apiKeys' && (
+                        <motion.div className="settings-section" initial={{opacity: 0}} animate={{opacity: 1}}>
+                            <div className="section-header-row">
+                                <div>
+                                    <h2><FontAwesomeIcon icon={faKey}/> API-Schlüssel</h2>
+                                    <p className="section-description">Erstelle API-Schlüssel für dein eigenes Konto, um Quizzle per <code>Authorization: Bearer</code> zu automatisieren. Jeder Schlüssel trägt deine Rolle.</p>
+                                </div>
+                                <Button text="Neuer Schlüssel" icon={faPlus} type="primary compact" onClick={() => setShowNewApiKeyDialog(true)}/>
+                            </div>
+
+                            <div className="api-key-list">
+                                {apiKeys.length === 0 && <p className="api-key-empty">Keine API-Schlüssel für diesen Benutzer.</p>}
+                                {apiKeys.map(k => (
+                                    <div key={k.id} className="api-key-card">
+                                        <div className="api-key-info">
+                                            <span className="api-key-name">{k.name}</span>
+                                            <span className="api-key-meta">
+                                                ••••{k.suffix} · erstellt am {new Date(k.createdAt).toLocaleDateString('de-DE')}
+                                                {k.expiresAt ? ` · läuft ab ${new Date(k.expiresAt).toLocaleDateString('de-DE')}` : ' · kein Ablaufdatum'}
+                                            </span>
+                                        </div>
+                                        <div className="user-actions">
+                                            <button className="icon-btn danger" title="Schlüssel widerrufen" onClick={() => revokeApiKey(k.id)}>
+                                                <FontAwesomeIcon icon={faTrash}/>
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </motion.div>
+                    )}
                 </div>
             </motion.div>
 
@@ -497,6 +594,47 @@ export const Admin = () => {
             >
                 <div className="new-user-form">
                     <Input type="password" placeholder="Neues Passwort (min. 6 Zeichen)" value={newPasswordValue} onChange={(e) => setNewPasswordValue(e.target.value)}/>
+                </div>
+            </Dialog>
+
+            <Dialog
+                isOpen={showNewApiKeyDialog}
+                onClose={() => {setShowNewApiKeyDialog(false); setNewApiKeyError('');}}
+                onConfirm={createApiKey}
+                title="Neuen API-Schlüssel erstellen"
+                confirmText="Erstellen"
+                cancelText="Abbrechen"
+            >
+                <div className="new-user-form">
+                    <div className="form-group">
+                        <label>Name</label>
+                        <Input placeholder="z. B. CI-Bot" value={newKeyName} onChange={(e) => {setNewKeyName(e.target.value); setNewApiKeyError('');}}/>
+                    </div>
+                    <div className="form-group">
+                        <label>Ablaufdatum (optional)</label>
+                        <Input type="date" value={newKeyExpiry} onChange={(e) => setNewKeyExpiry(e.target.value)}/>
+                    </div>
+                    {newApiKeyError && <div className="form-error">{newApiKeyError}</div>}
+                </div>
+            </Dialog>
+
+            <Dialog
+                isOpen={!!newKeyResult}
+                onClose={() => setNewKeyResult(null)}
+                onConfirm={() => setNewKeyResult(null)}
+                title="API-Schlüssel erstellt"
+                confirmText="Fertig"
+                showCancelButton={false}
+            >
+                <div className="new-key-result">
+                    <p className="new-key-warning">
+                        Dieser Schlüssel wird nur <strong>ein einziges Mal</strong> angezeigt.
+                        Kopiere ihn jetzt — danach ist er nicht wiederherstellbar.
+                    </p>
+                    <div className="new-key-box">
+                        <code>{newKeyResult?.key}</code>
+                        <Button icon={faCopy} text="Kopieren" type="secondary compact" onClick={() => copyKey(newKeyResult?.key)}/>
+                    </div>
                 </div>
             </Dialog>
         </div>
